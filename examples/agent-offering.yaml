@@ -1,0 +1,31 @@
+offeringId: agent-support-1-1
+resourceType: agent
+title: Помощник команды
+description: Готовит сводку для передачи смены по заметкам дежурного.
+owner: team-agents
+acceptsKnowledgeBases: true
+
+source:
+  repository: https://gitlab.example.invalid/ai/shift-helper
+  commit: '0123456789abcdef0123456789abcdef01234567'
+deployment:
+  manifestPath: deploy/kubernetes/
+  image: 'registry.example.invalid/ai/shift-helper@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+
+parameterSchema:
+  $schema: 'http://json-schema.org/draft-07/schema#'
+  type: object
+  additionalProperties: false
+  required: [summaryFormat]
+  properties:
+    summaryFormat:
+      title: Формат сводки
+      description: brief — короткий текст, checklist — список для передачи смены.
+      type: string
+      enum: [brief, checklist]
+    itemLimit:
+      title: Максимум пунктов в сводке
+      type: integer
+      minimum: 1
+      maximum: 10
+      default: 5

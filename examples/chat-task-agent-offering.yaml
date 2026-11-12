@@ -1,0 +1,31 @@
+# Пример для обсуждения. Адреса, коммит и digest вымышлены.
+offeringId: chat-task-agent-v1
+resourceType: agent
+title: Чат-агент для поручений в GitLab
+description: По поручению сотрудника создаёт задачу в выбранном GitLab-проекте и возвращает ссылку.
+owner: team-agents
+acceptsKnowledgeBases: false
+
+source:
+  repository: https://gitlab.example.invalid/agents/gitlab-task-assistant
+  commit: '3456789abcdef0123456789abcdef0123456789a'
+deployment:
+  manifestPath: deploy/kubernetes/
+  image: 'registry.example.invalid/agents/gitlab-task-assistant@sha256:123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0'
+
+parameterSchema:
+  $schema: 'http://json-schema.org/draft-07/schema#'
+  type: object
+  additionalProperties: false
+  required: [gitlabConnectionId, targetRepositoryId]
+  properties:
+    gitlabConnectionId:
+      title: Подключение GitLab
+      description: Запись из реестра подключений, разрешённых проекту IDP.
+      type: string
+      minLength: 1
+    targetRepositoryId:
+      title: Целевой GitLab-проект
+      description: Зарегистрированный репозиторий, доступный через выбранное подключение и разрешённый проекту IDP.
+      type: string
+      minLength: 1

@@ -1,0 +1,554 @@
+openapi: 3.0.3
+info:
+  title: API поставщика для маркетплейса IDP
+  version: 0.4.0-draft
+  description: |
+    Предложение команды агентов для команды корпоративного маркетплейса.
+    Поставщик готовит в GitLab релиз агента с описанием настроек. IDP публикует
+    карточку релиза и формирует заказ из выбора сотрудника и контекста проекта.
+    Заказ автоматически исполняется в Kubernetes-кластере IDP. Предложение
+    sre-grafana-v1 выдаёт проекту подключение Grafana к SRE-исследователю.
+    После выдачи сотрудник открывает по SSO страницу подключения или интерфейс
+    другого заказанного продукта. Вызовы API заказов выполняет сервер IDP.
+servers:
+  - url: https://provider.example.invalid/v2
+    description: Условный адрес для примеров
+security:
+  - platformBearer: []
+paths:
+  /orders:
+    post:
+      operationId: createOrder
+      summary: Заказать ресурс для проекта
+      description: |
+        До первой отправки IDP сохраняет версию API, ключ действия и полное тело.
+        При двойном нажатии, потере ответа или возвращении на страницу до получения
+        orderId сервер IDP использует сохранённые данные. Для отдельного действия
+        «Создать ещё одного» IDP выдаёт новый ключ даже при совпадении тела.
+
+        IDP проверяет право инициатора заказать продукт в проекте. Для новой заявки
+        поставщик проверяет право служебного клиента и указанного requesterId
+        (если он передан) заказывать в projectId, доступность предложения,
+        а также их право подключить каждую указанную базу. Поставщик использует
+        согласованный источник прав. При отказе хотя бы по одной базе отклоняется
+        вся заявка до регистрации заказа. IDP предлагает обновить выбор, а для
+        исправленного заказа создаёт новый ключ. Недоступность источника прав даёт 503.
+
+        Для нового заказа агента поставщик находит релиз по offeringId и проверяет
+        настройки по parameterSchema этой версии. Отсутствие parameters при
+        проверке означает пустой объект. Поставщик подставляет значения default
+        для пропущенных настроек и проверяет получившийся объект целиком.
+        Нарушение схемы тела CreateOrder даёт 400. Если формально допустимые поля
+        несовместимы со схемой настроек выбранного релиза, возвращается 422
+        invalid_configuration до регистрации (включая ограничения типа и диапазона).
+        Для предложений без настраиваемых полей допустим только пустой набор.
+        Площадку для отдельного экземпляра сервис определяет по доверенной привязке
+        projectId в Kubernetes-кластере IDP. Отсутствие необходимой привязки даёт 422 deployment_target_not_configured,
+        временная недоступность источника привязок — 503.
+
+        Поставщик атомарно связывает стабильный ID служебного клиента и ключ
+        с исходным телом и orderId на весь срок хранения заказа. Для агента
+        поставщик при регистрации сохраняет коммит и digest образа релиза,
+        итоговые значения настроек и выбранную площадку. Одновременные отправки
+        дают один заказ. Смена токена того же клиента сохраняет эту привязку.
+        В этой версии удаление и автоматическое истечение срока заказа не предусмотрены.
+        Для уже принятого ключа поставщик сначала проверяет право клиента читать
+        заказ в исходном проекте (отказ — 403), затем сравнивает все значения JSON,
+        включая requesterId, параметры и порядок knowledgeBaseIds.
+        При сравнении исходного тела отсутствие поля parameters отличается от
+        явно переданного пустого объекта. Порядок полей объекта произволен.
+        Совпадение даёт 200 с текущим состоянием прежнего заказа, несовпадение —
+        409. Изменение прав на базу после приёма не препятствует восстановлению
+        заказа уполномоченным клиентом.
+
+        При выдаче отдельного экземпляра исполнитель автоматически запускает сохранённый образ
+        в Kubernetes-кластере IDP с зафиксированной конфигурацией
+        на выбранной площадке. Эти значения закреплены за заказом и сохраняются
+        при повторе после выхода нового релиза или смены привязки проекта.
+        Успешный заказ даёт один экземпляр ресурса, включая случаи внутренних
+        повторов. При потере ответа в процессе создания поставщик сверяет результат
+        уже начатой операции перед следующей попыткой.
+        Особый профиль sre-grafana-v1 принимает зарегистрированное подключение
+        Grafana, уникальные UID правил и зарегистрированный канал RCA в parameters.
+        IDP авторизует дежурного до отправки. Поставщик проверяет доступ проекта
+        ко всем ссылкам, принадлежность каждого правила выбранной Grafana,
+        профиль сервиса и источников и право доставки в канал. Отсутствующие
+        обязательные поля или неверная форма параметров дают 400. Недоступная
+        ссылка даёт 404. Неподдерживаемое правило или неполный профиль дают 422.
+        Адаптер в Kubernetes-кластере IDP автоматически регистрирует одно
+        проектное подключение на заказ. Каждое следующее срабатывание выбранного
+        правила запускает расследование в действующем API исследователя.
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          description: Непрозрачный ключ, который сервер IDP генерирует для одного действия создания и сохраняет для повторов.
+          schema:
+            type: string
+            minLength: 1
+          example: click-001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrder'
+            examples:
+              sreGrafana:
+                summary: Разовое подключение правил Grafana к каналу RCA проекта
+                value:
+                  projectId: team-checkout
+                  offeringId: sre-grafana-v1
+                  resourceType: agent
+                  parameters:
+                    grafanaConnectionId: grafana-checkout
+                    ruleUids: [checkout-5xx]
+                    deliveryChannelId: rca-checkout
+              agent:
+                summary: Заказ типового агента одной кнопкой
+                value: {projectId: team-demo, requesterId: user-demo, offeringId: agent-support, resourceType: agent}
+              agentWithKnowledgeBase:
+                summary: Агент с доступной проекту базой знаний
+                value: {projectId: team-demo, requesterId: user-demo, offeringId: agent-support, resourceType: agent, knowledgeBaseIds: [kb-demo]}
+              shiftAgent:
+                summary: Сотрудник выбрал формат передачи смены, лимит задаёт релиз
+                value:
+                  projectId: team-demo
+                  requesterId: user-demo
+                  offeringId: agent-support-1-1
+                  resourceType: agent
+                  parameters: {summaryFormat: checklist}
+              knowledgeBase:
+                summary: Отдельная база знаний
+                value: {projectId: team-demo, requesterId: user-demo, offeringId: kb-standard, resourceType: knowledge_base}
+              rag:
+                summary: RAG-сервис для существующей базы
+                value: {projectId: team-demo, requesterId: user-demo, offeringId: rag-search, resourceType: rag_service, knowledgeBaseIds: [kb-demo]}
+      responses:
+        '202':
+          description: Новый заказ зарегистрирован. IDP сохраняет orderId и показывает «Принят». Для отдельного экземпляра агента возвращается deploymentTargetId. Для подключения sre-grafana-v1 площадка может обслуживать несколько проектов, поле необязательно.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Order'
+                  - type: object
+                    properties:
+                      status: {type: string, enum: [queued]}
+                    anyOf:
+                      - properties:
+                          offeringId: {type: string, enum: [sre-grafana-v1]}
+                      - required: [deploymentTargetId]
+                      - properties:
+                          resourceType: {type: string, enum: [knowledge_base, rag_service]}
+              examples:
+                agent:
+                  value: {orderId: ord-demo, projectId: team-demo, offeringId: agent-support, resourceType: agent, status: queued, deploymentTargetId: runtime-team-demo}
+                shiftAgent:
+                  value: {orderId: ord-shift-demo, projectId: team-demo, offeringId: agent-support-1-1, resourceType: agent, status: queued, deploymentTargetId: runtime-team-demo}
+                sreGrafana:
+                  value: {orderId: ord-checkout-01, projectId: team-checkout, offeringId: sre-grafana-v1, resourceType: agent, status: queued}
+        '200':
+          description: Получен повтор с тем же ключом и телом. Возвращён тот же orderId и его текущий статус.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+              example: {orderId: ord-demo, projectId: team-demo, offeringId: agent-support, resourceType: agent, status: in_progress, deploymentTargetId: runtime-team-demo}
+        '400':
+          description: Тело или обязательный заголовок не прошли проверку схемы, например в заказе RAG-сервиса отсутствует knowledgeBaseIds.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example: {code: invalid_request, message: Передайте заголовок Idempotency-Key.}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: У служебного клиента или инициатора нет права заказать в проекте. При повторе принятого заказа у клиента нет права прочитать его в исходном проекте. Ответ не раскрывает детали заказа.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example: {code: access_denied, message: Нет доступа к заказу для указанного проекта.}
+        '404':
+          description: Предложение, база, подключение Grafana, правило либо канал отсутствует или недоступен проекту. Возвращается resource_not_found без orderId и сведений о чужом ресурсе. Заказ не создаётся.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example: {code: resource_not_found, message: Указанный ресурс недоступен.}
+        '409':
+          description: Клиент уже использовал этот ключ с другим телом. Новый заказ не создан.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example: {code: idempotency_conflict, message: Этот ключ уже использован с другим телом заказа.}
+        '422':
+          description: Новый заказ не зарегистрирован. Конфигурация несовместима с предложением, для отдельного экземпляра нет площадки, либо для выбранного правила не настроен профиль HTTP 5xx (сервис, источники и ссылка на логи).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                unsupportedBases:
+                  value: {code: invalid_configuration, message: Это предложение не поддерживает подключение указанных баз знаний.}
+                missingParameter:
+                  value: {code: invalid_configuration, message: Выберите формат передачи смены в поле summaryFormat.}
+                targetMissing:
+                  value: {code: deployment_target_not_configured, message: Для проекта не настроена площадка запуска агента. Обратитесь к команде платформы.}
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /orders/{orderId}:
+    get:
+      operationId: getOrder
+      summary: Получить статус заказа и результат предоставления
+      description: |
+        Сервер IDP может опрашивать поставщика в фоне со служебным токеном после
+        закрытия страницы. Поставщик проверяет право клиента читать заказ в его
+        проекте. Перед показом результата IDP проверяет права текущего сотрудника
+        на просмотр заказа в этом проекте.
+
+        Заказ проходит queued («Принят»), in_progress («Создаётся»), затем
+        succeeded («Готов») либо failed («Ошибка создания»). Опрос может пропустить
+        промежуточные состояния. Для подключения sre-grafana-v1 IDP показывает
+        «Подключено» по succeeded. Сервис заранее создаёт страницу подключения по SSO,
+        затем проверяет сквозной путь синтетического алерта и подтверждает доставку
+        тестового RCA в выбранный канал. Первый боевой алерт может прийти позднее.
+        В остальных заказах агента, принятых с версии 0.3, поставщик возвращает
+        deploymentTargetId во всех состояниях. Если поставщик уже
+        создал экземпляр агента, которому ещё недоступен диалог, он сохраняет
+        in_progress без resourceRef.
+        Перед выдачей он повторно проверяет права проекта и инициатора,
+        доступ к выбранным базам и готовность продукта по условиям ResourceRef.
+        Временная неготовность сохраняет in_progress до согласованного срока
+        выдачи. При истечении этого срока, подтверждённом отзыве необходимого
+        права или окончательной ошибке поставщик выставляет failed и заполняет
+        error безопасной для сотрудника причиной. При окончательной ошибке
+        развёртывания на выбранной площадке код ошибки — deployment_failed.
+
+        После succeeded или failed состояние заказа окончательно. IDP завершает
+        опрос и показывает соответственно ссылку из resourceRef.url или
+        error.message и orderId. При тайм-ауте или 503 IDP сохраняет последнее
+        известное состояние и возобновляет GET с тем же orderId.
+      parameters:
+        - in: path
+          name: orderId
+          required: true
+          description: Идентификатор, выданный поставщиком в ответе 202 или 200 на POST /orders и сохранённый IDP.
+          schema:
+            $ref: '#/components/schemas/Id'
+      responses:
+        '200':
+          description: Текущее состояние, включая прикладной результат завершённого заказа.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+              examples:
+                sreGrafanaConnected:
+                  summary: Подключение проверено и готово принимать боевые алерты
+                  value:
+                    orderId: ord-checkout-01
+                    projectId: team-checkout
+                    offeringId: sre-grafana-v1
+                    resourceType: agent
+                    status: succeeded
+                    resourceRef: {id: conn-checkout-01, url: 'https://provider.example.invalid/connections/conn-checkout-01'}
+                agentPreparing:
+                  summary: Экземпляр агента создан, канал первого диалога ещё не готов
+                  value: {orderId: ord-demo, projectId: team-demo, offeringId: agent-support, resourceType: agent, status: in_progress, deploymentTargetId: runtime-team-demo}
+                succeeded:
+                  summary: Агент может ответить на первый запрос
+                  value:
+                    orderId: ord-demo
+                    projectId: team-demo
+                    offeringId: agent-support
+                    resourceType: agent
+                    status: succeeded
+                    deploymentTargetId: runtime-team-demo
+                    resourceRef: {id: agent-demo, url: 'https://provider.example.invalid/agents/agent-demo'}
+                shiftAgentReady:
+                  summary: Релиз с выбранным форматом сводки развёрнут в окружении проекта и отвечает
+                  value:
+                    orderId: ord-shift-demo
+                    projectId: team-demo
+                    offeringId: agent-support-1-1
+                    resourceType: agent
+                    status: succeeded
+                    deploymentTargetId: runtime-team-demo
+                    resourceRef: {id: agent-shift-demo, url: 'https://provider.example.invalid/agents/agent-shift-demo'}
+                emptyKnowledgeBase:
+                  summary: Пустая база принимает документы
+                  value:
+                    orderId: ord-kb-demo
+                    projectId: team-demo
+                    offeringId: kb-standard
+                    resourceType: knowledge_base
+                    status: succeeded
+                    resourceRef: {id: kb-demo, url: 'https://provider.example.invalid/bases/kb-demo'}
+                ragReady:
+                  summary: RAG-сервис может выполнить поиск по заказанной базе kb-demo
+                  value:
+                    orderId: ord-rag-demo
+                    projectId: team-demo
+                    offeringId: rag-search
+                    resourceType: rag_service
+                    status: succeeded
+                    resourceRef: {id: rag-demo, url: 'https://provider.example.invalid/rag/rag-demo'}
+                failed:
+                  summary: Поставщику не удалось подготовить диалог
+                  value:
+                    orderId: ord-agent-failed
+                    projectId: team-demo
+                    offeringId: agent-support
+                    resourceType: agent
+                    status: failed
+                    deploymentTargetId: runtime-team-demo
+                    error: {code: provisioning_failed, message: Не удалось подготовить агента к диалогу.}
+                deploymentFailed:
+                  summary: Поставщик не смог запустить релиз на площадке проекта
+                  value:
+                    orderId: ord-deploy-failed
+                    projectId: team-demo
+                    offeringId: agent-support-1-1
+                    resourceType: agent
+                    status: failed
+                    deploymentTargetId: runtime-team-demo
+                    error: {code: deployment_failed, message: Не удалось развернуть агента в окружении проекта.}
+                accessRevoked:
+                  summary: Во время подготовки RAG-сервиса доступ к выбранной базе отозван
+                  value:
+                    orderId: ord-demo-failed
+                    projectId: team-demo
+                    offeringId: rag-search
+                    resourceType: rag_service
+                    status: failed
+                    error: {code: resource_not_found, message: Выбранный ресурс недоступен.}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Заказ отсутствует либо клиенту недоступен. Ответ одинаков в обоих случаях.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example: {code: order_not_found, message: Заказ недоступен.}
+        '503':
+          $ref: '#/components/responses/Unavailable'
+components:
+  securitySchemes:
+    platformBearer:
+      type: http
+      scheme: bearer
+      description: Сервер IDP получает служебный токен по согласованному механизму и передаёт его в Authorization по схеме Bearer. Поставщик сопоставляет токен со стабильным ID клиента. Формат и выпуск согласуются с владельцем платформы.
+  schemas:
+    Id:
+      type: string
+      minLength: 1
+      description: Непрозрачный идентификатор.
+    ResourceType:
+      type: string
+      enum: [agent, knowledge_base, rag_service]
+    SreGrafanaParameters:
+      type: object
+      additionalProperties: false
+      required: [grafanaConnectionId, ruleUids, deliveryChannelId]
+      properties:
+        grafanaConnectionId:
+          description: Подключение из разрешённого проекту реестра Grafana, выбранное дежурным.
+          allOf:
+            - $ref: '#/components/schemas/Id'
+        ruleUids:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/Id'
+          description: UID выбранных правил HTTP 5xx внутри зарегистрированного подключения Grafana.
+        deliveryChannelId:
+          description: Идентификатор выбранного зарегистрированного канала RCA, доступного проекту.
+          allOf:
+            - $ref: '#/components/schemas/Id'
+    CreateOrder:
+      type: object
+      required: [projectId, offeringId, resourceType]
+      additionalProperties: false
+      allOf:
+        - oneOf:
+            - required: [parameters]
+              properties:
+                offeringId: {type: string, enum: [sre-grafana-v1]}
+                resourceType: {type: string, enum: [agent]}
+                parameters:
+                  $ref: '#/components/schemas/SreGrafanaParameters'
+              not:
+                required: [knowledgeBaseIds]
+            - required: [requesterId]
+              not:
+                properties:
+                  offeringId: {type: string, enum: [sre-grafana-v1]}
+      properties:
+        projectId:
+          description: Активный проект из проверенного сервером IDP контекста заказа.
+          allOf:
+            - $ref: '#/components/schemas/Id'
+        requesterId:
+          description: Стабильный идентификатор инициатора из проверенной сессии сотрудника. Аутентифицированный сервер IDP сам подставляет его в запрос. Поставщик доверяет этому утверждению клиента и проверяет права субъекта.
+          allOf:
+            - $ref: '#/components/schemas/Id'
+        offeringId:
+          description: Неизменяемый ID версии шаблона поставщика из карточки IDP. Шаблон задаёт настройки по умолчанию и допустимые параметры.
+          allOf:
+            - $ref: '#/components/schemas/Id'
+        resourceType:
+          description: Тип из карточки выбранной версии предложения поставщика.
+          allOf:
+            - $ref: '#/components/schemas/ResourceType'
+        knowledgeBaseIds:
+          type: array
+          uniqueItems: true
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/Id'
+          description: ID баз, выбранных сотрудником из доступных для подключения в этом проекте (resourceRef.id базы). Для RAG-сервиса требуется минимум одна база, для агента выбор опционален и зависит от шаблона. В заказе базы поле запрещено.
+        parameters:
+          type: object
+          additionalProperties: true
+          description: |
+            Значения, которые сотрудник вводит в форму агента. Имена полей,
+            допустимые JSON-значения и значения по умолчанию задаёт parameterSchema
+            опубликованного релиза. Например, для agent-support-1-1 обязателен
+            summaryFormat со значением brief или checklist. Необязательный itemLimit —
+            целое число от 1 до 10 со значением по умолчанию 5.
+            Поля проекта, пользователя, баз, адрес кластера и образ агенту через
+            эту форму не передаются. Секреты предоставляет доверенное окружение запуска.
+      oneOf:
+        - properties:
+            resourceType:
+              type: string
+              enum: [agent]
+        - required: [knowledgeBaseIds]
+          properties:
+            resourceType:
+              type: string
+              enum: [rag_service]
+          not:
+            required: [parameters]
+        - properties:
+            resourceType:
+              type: string
+              enum: [knowledge_base]
+          not:
+            anyOf:
+              - required: [knowledgeBaseIds]
+              - required: [parameters]
+    Order:
+      type: object
+      required: [orderId, projectId, offeringId, resourceType, status]
+      properties:
+        orderId:
+          $ref: '#/components/schemas/Id'
+        projectId:
+          $ref: '#/components/schemas/Id'
+        offeringId:
+          $ref: '#/components/schemas/Id'
+        resourceType:
+          $ref: '#/components/schemas/ResourceType'
+        status:
+          type: string
+          enum: [queued, in_progress, succeeded, failed]
+        deploymentTargetId:
+          description: Выбранная площадка проекта. Для отдельного экземпляра агента по версии 0.3 и далее возвращается с регистрации. У проектного подключения sre-grafana-v1, исторических заказов и других типов ресурса поле может отсутствовать.
+          allOf:
+            - $ref: '#/components/schemas/Id'
+        resourceRef:
+          $ref: '#/components/schemas/ResourceRef'
+        error:
+          $ref: '#/components/schemas/Error'
+      oneOf:
+        - properties:
+            status:
+              type: string
+              enum: [queued, in_progress]
+          not:
+            anyOf:
+              - required: [resourceRef]
+              - required: [error]
+        - required: [resourceRef]
+          properties:
+            status:
+              type: string
+              enum: [succeeded]
+          not:
+            required: [error]
+        - required: [error]
+          properties:
+            status:
+              type: string
+              enum: [failed]
+          not:
+            required: [resourceRef]
+    ResourceRef:
+      type: object
+      required: [id, url]
+      description: |
+        Только при succeeded поставщик возвращает ID выданного ресурса и его точку входа.
+        В заказе sre-grafana-v1 id обозначает проектное подключение, а url открывает
+        его страницу, где видны правила, канал и результат сквозной проверки RCA.
+        Для чат-агента с инструментами результат выдачи — доступный чат и готовность
+        заявленных подключений. Отдельные поручения выполняются после выдачи.
+        ID и результат внешней операции показывает интерфейс агента.
+        Для диалогового агента и действия «Открыть агента» поставщик проверяет, что инициатору доступен
+        диалог, а контрольный запрос к экземпляру возвращает ответ агента.
+        Если выбраны базы, агент может выполнить поиск по каждой из них.
+        По кнопке «Открыть базу знаний» инициатор получает пустую базу, готовую принимать
+        документы. Индексация загруженных позже документов — отдельный процесс.
+        По кнопке «Открыть RAG-сервис» инициатор получает интерфейс для вопросов.
+        Сервис ищет по всем и только выбранным базам
+        и отвечает по найденным доступным материалам. При отсутствии совпадений
+        сотрудник получает сообщение об этом. Недоступность хотя бы одной
+        выбранной базы препятствует выдаче.
+        При открытии поставщик проверяет SSO и право пользователя на ресурс,
+        при работе с материалами — его текущие права на базы и документы.
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        url:
+          type: string
+          format: uri
+          pattern: '^https://'
+          description: Постоянная HTTPS-ссылка на интерфейс ресурса с проверкой доступа пользователя через SSO. Токены в URL запрещены.
+    Error:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          minLength: 1
+          description: Машиночитаемый код причины для клиента.
+        message:
+          type: string
+          minLength: 1
+          description: Безопасное для показа описание без токенов и внутренних журналов.
+  responses:
+    Unauthorized:
+      description: Учетные данные отсутствуют или недействительны.
+      headers:
+        WWW-Authenticate:
+          schema: {type: string}
+          example: Bearer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: {code: unauthorized, message: Требуется аутентификация.}
+    Unavailable:
+      description: Временная недоступность. Повторите запрос позже, сохранив ключ для POST.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: {code: temporarily_unavailable, message: Сервис временно недоступен.}

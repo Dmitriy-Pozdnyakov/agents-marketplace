@@ -1,0 +1,49 @@
+# Пример релиза для каталога IDP. Адреса, commit и digest вымышлены.
+offeringId: sre-grafana-v1
+resourceType: agent
+title: Подключить SRE-агента к алертам Grafana
+description: Расследует выбранные алерты HTTP 5xx и доставляет отчёт дежурному.
+owner: team-sre-agents
+acceptsKnowledgeBases: false
+source:
+  repository: https://gitlab.example.invalid/sre-agents/grafana-rca-adapter.git
+  commit: '4e7b09a18c5d230f6b14a9e2c87f30d16ba45e92'
+deployment:
+  # Путь в указанном commit. IDP развёртывает адаптер в Kubernetes.
+  manifestPath: deploy/kubernetes/grafana-rca-adapter.yaml
+  image: 'registry.example.invalid/sre-agents/grafana-rca-adapter@sha256:9af3b160d84c25e79af3b160d84c25e79af3b160d84c25e79af3b160d84c25e7'
+  env:
+    - name: RCA_API_BASE_URL
+      valueFrom: runtimeConfig
+      description: Базовый HTTPS-адрес действующего RCA API из конфигурации среды IDP.
+    - name: RCA_API_TOKEN
+      valueFrom: secretRef
+      description: Ссылка на секрет с учётными данными адаптера для вызова RCA API.
+parameterSchema:
+  $schema: 'http://json-schema.org/draft-07/schema#'
+  type: object
+  additionalProperties: false
+  required:
+    - grafanaConnectionId
+    - ruleUids
+    - deliveryChannelId
+  properties:
+    grafanaConnectionId:
+      title: Подключение Grafana
+      description: Сотрудник выбирает подключение из доступных текущему проекту в IDP.
+      type: string
+      minLength: 1
+    ruleUids:
+      title: Правила оповещения
+      description: Сотрудник выбирает правила из списка, доступного проекту в выбранном подключении Grafana.
+      type: array
+      minItems: 1
+      uniqueItems: true
+      items:
+        type: string
+        minLength: 1
+    deliveryChannelId:
+      title: Канал доставки отчётов
+      description: Сотрудник выбирает канал из разрешённых для текущего проекта в IDP.
+      type: string
+      minLength: 1
