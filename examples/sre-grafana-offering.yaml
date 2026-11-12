@@ -12,6 +12,15 @@ deployment:
   # Путь в указанном commit. IDP развёртывает адаптер в Kubernetes.
   manifestPath: deploy/kubernetes/grafana-rca-adapter.yaml
   image: 'registry.example.invalid/sre-agents/grafana-rca-adapter@sha256:9af3b160d84c25e79af3b160d84c25e79af3b160d84c25e79af3b160d84c25e7'
+  # Пример входа исполнителя и результата выдачи, формат импорта согласуется с IDP.
+  connectionConfig:
+    fileName: connection.yaml
+    fromIdp: [projectId, connectionId]
+    fromForm: [grafanaConnectionId, ruleUids, deliveryChannelId]
+  entrypointPath: '/connections/{connectionId}'
+  readinessTest:
+    manifestPath: deploy/tests/rca-smoke-job.yaml
+    description: Синтетический HTTP 5xx выбранного правила доставил RCA в согласованный канал.
   env:
     - name: RCA_API_BASE_URL
       valueFrom: runtimeConfig
