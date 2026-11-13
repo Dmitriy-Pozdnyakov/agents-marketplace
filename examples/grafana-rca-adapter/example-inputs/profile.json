@@ -1,0 +1,14 @@
+{
+  "projectId": "team-checkout",
+  "grafanaConnectionId": "grafana-checkout",
+  "orgId": 1,
+  "rules": {
+    "checkout-5xx": {
+      "service": "checkout",
+      "logsUid": "demo-logs",
+      "tracesUid": "demo-traces",
+      "metricsUid": "demo-metrics",
+      "logsUrl": "https://grafana.example.invalid/d/demo-checkout/logs?orgId=1"
+    }
+  }
+}

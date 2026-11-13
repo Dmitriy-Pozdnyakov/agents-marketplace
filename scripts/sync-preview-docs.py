@@ -20,6 +20,10 @@ DOCUMENTS = (
     "examples/sre-grafana-offering.yaml",
     "architecture.md",
     "agents/TEMPLATE.md",
+    "examples/grafana-rca-adapter/marketplace/offering.yaml",
+    "examples/grafana-rca-adapter/.env.example",
+    "examples/grafana-rca-adapter/deploy/kubernetes/grafana-rca-adapter.yaml",
+    "examples/grafana-rca-adapter/deploy/tests/rca-smoke-job.yaml",
 )
 START = '<template id="embedded-document-store">\n<pre id="embedded-document-data">'
 END = "</pre>\n</template>"

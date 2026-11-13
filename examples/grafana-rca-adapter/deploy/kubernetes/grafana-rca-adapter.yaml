@@ -1,0 +1,96 @@
+# Демонстрационный контракт контейнера для интеграции с IDP.
+# При установке IDP подставляет имена и метки конкретного подключения.
+# Образ и домен в примере вымышленные. /readyz сообщает о готовности процесса.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rca-conn-checkout-01
+  labels:
+    app.kubernetes.io/name: grafana-rca-adapter
+    app.kubernetes.io/instance: rca-conn-checkout-01
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: grafana-rca-adapter
+      app.kubernetes.io/instance: rca-conn-checkout-01
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: grafana-rca-adapter
+        app.kubernetes.io/instance: rca-conn-checkout-01
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: adapter
+          image: registry.example.invalid/sre-agents/grafana-rca-adapter@sha256:9af3b160d84c25e79af3b160d84c25e79af3b160d84c25e79af3b160d84c25e7
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: CONNECTION_CONFIG_PATH
+              value: /etc/adapter/connection.yaml
+            - name: RCA_API_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: rca-conn-checkout-01-config
+                  key: RCA_API_BASE_URL
+            - name: PROFILE_API_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: rca-conn-checkout-01-config
+                  key: PROFILE_API_BASE_URL
+            - name: PROFILE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: rca-conn-checkout-01-secrets
+                  key: PROFILE_API_TOKEN
+            - name: RCA_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: rca-conn-checkout-01-secrets
+                  key: RCA_API_TOKEN
+            - name: GRAFANA_WEBHOOK_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: rca-conn-checkout-01-secrets
+                  key: GRAFANA_WEBHOOK_TOKEN
+            - name: DELIVERY_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: rca-conn-checkout-01-secrets
+                  key: DELIVERY_API_TOKEN
+          volumeMounts:
+            - name: connection
+              mountPath: /etc/adapter
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+      volumes:
+        - name: connection
+          configMap:
+            name: rca-conn-checkout-01-config
+            items:
+              - key: connection.yaml
+                path: connection.yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rca-conn-checkout-01
+  labels:
+    app.kubernetes.io/name: grafana-rca-adapter
+    app.kubernetes.io/instance: rca-conn-checkout-01
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: grafana-rca-adapter
+    app.kubernetes.io/instance: rca-conn-checkout-01
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

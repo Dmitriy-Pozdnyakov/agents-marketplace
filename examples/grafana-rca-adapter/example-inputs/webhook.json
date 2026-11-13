@@ -1,0 +1,21 @@
+{
+  "orgId": 1,
+  "alerts": [
+    {
+      "status": "firing",
+      "annotations": {
+        "rule_uid": "checkout-5xx"
+      },
+      "fingerprint": "alert-instance-001",
+      "startsAt": "2026-10-30T11:40:00Z",
+      "labels": {
+        "alertname": "Checkout HTTP 5xx",
+        "api_name": "checkout",
+        "api_method": "POST",
+        "api_endpoint": "/checkout",
+        "app_name": "demo-store",
+        "code": "503"
+      }
+    }
+  ]
+}

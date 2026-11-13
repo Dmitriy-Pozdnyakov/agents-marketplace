@@ -1,0 +1,9 @@
+{
+  "projectId": "team-checkout",
+  "connectionId": "conn-checkout-01",
+  "grafanaConnectionId": "grafana-checkout",
+  "ruleUids": [
+    "checkout-5xx"
+  ],
+  "deliveryChannelId": "rca-checkout"
+}

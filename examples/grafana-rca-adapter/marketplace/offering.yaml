@@ -1,0 +1,86 @@
+# Переносимый пример карточки. GitLab-адрес, commit, registry и digest вымышлены.
+offeringId: sre-grafana-v1
+title: "Подключить SRE-агента к алертам Grafana"
+description: "Для выбранных правил Grafana агент запрашивает расследование RCA и доставляет отчёт в канал дежурного."
+owner: team-sre-agents
+resourceType: agent
+acceptsKnowledgeBases: false
+source:
+  repository: https://gitlab.example.invalid/sre-agents/grafana-rca-adapter.git
+  commit: '4e7b09a18c5d230f6b14a9e2c87f30d16ba45e92'
+permissions:
+  # Проверки IDP для пользователя и проекта при заказе и перед выдачей подключения.
+  grafanaConnectionId: "Использовать зарегистрированное подключение Grafana этого проекта."
+  ruleUids: "Подключить каждое выбранное правило в рамках указанного подключения Grafana."
+  deliveryChannelId: "Использовать разрешённый в проекте канал для доставки отчётов."
+parameterSchema:
+  $schema: 'http://json-schema.org/draft-07/schema#'
+  type: object
+  additionalProperties: false
+  required: [grafanaConnectionId, ruleUids, deliveryChannelId]
+  properties:
+    grafanaConnectionId:
+      title: "Подключение Grafana"
+      description: "Сотрудник выбирает из подключений Grafana, доступных ему в текущем проекте IDP."
+      type: string
+      minLength: 1
+    ruleUids:
+      title: "Правила оповещения"
+      description: "Сотрудник выбирает правила текущего проекта в выбранном подключении Grafana."
+      type: array
+      minItems: 1
+      uniqueItems: true
+      items:
+        type: string
+        minLength: 1
+    deliveryChannelId:
+      title: "Канал доставки RCA"
+      description: "Сотрудник выбирает канал доставки, разрешённый ему и текущему проекту в IDP."
+      type: string
+      minLength: 1
+deployment:
+  manifestPath: deploy/kubernetes/grafana-rca-adapter.yaml
+  image: 'registry.example.invalid/sre-agents/grafana-rca-adapter@sha256:9af3b160d84c25e79af3b160d84c25e79af3b160d84c25e79af3b160d84c25e7'
+  entrypointPath: '/connections/{connectionId}'
+  connectionConfig:
+    fileName: connection.yaml
+    fromIdp: [projectId, connectionId]
+    fromForm: [grafanaConnectionId, ruleUids, deliveryChannelId]
+  env:
+    - name: RCA_API_BASE_URL
+      valueFrom: runtimeConfig
+      description: "Базовый HTTPS-адрес RCA API из конфигурации среды IDP."
+    - name: RCA_API_TOKEN
+      valueFrom: secretRef
+      description: "Токен для вызова RCA API из хранилища секретов среды."
+    - name: GRAFANA_WEBHOOK_TOKEN
+      valueFrom: secretRef
+      description: "Секрет проекта для проверки входящих уведомлений Grafana."
+    - name: DELIVERY_API_TOKEN
+      valueFrom: secretRef
+      description: "Токен проекта для доставки отчёта в выбранный канал."
+    - name: PROFILE_API_BASE_URL
+      valueFrom: runtimeConfig
+      description: "Предлагаемый HTTPS-адрес согласованного реестра подключений проекта."
+    - name: PROFILE_API_TOKEN
+      valueFrom: secretRef
+      description: "Токен чтения профилей подключений, ограниченный текущим проектом."
+    - name: CONNECTION_CONFIG_PATH
+      valueFrom: fixed
+      value: /etc/adapter/connection.yaml
+    - name: PORT
+      valueFrom: fixed
+      value: '8080'
+  readinessTest:
+    # Тестовый HTTP 5xx в Grafana → расследование RCA → отчёт в выбранном канале.
+    manifestPath: deploy/tests/rca-smoke-job.yaml
+    env:
+      - name: SMOKE_FIXTURE_ID
+        valueFrom: runtimeConfig
+        description: "Идентификатор тестового источника HTTP 5xx для сквозной проверки."
+      - name: SMOKE_TRIGGER_TOKEN
+        valueFrom: secretRef
+        description: "Токен Job для запуска тестового события в согласованном источнике."
+      - name: SMOKE_RUN_ID
+        valueFrom: runtimeConfig
+        description: "ID запуска сквозной проверки. Все повторы этого запуска используют тот же ID."
